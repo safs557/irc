@@ -340,18 +340,34 @@ async function loadAdminVideos() {
   try {
     const resp = await fetch('/api/memorization-videos', { credentials: 'include' });
     const json = await resp.json().catch(() => null);
+
     if (!json || !json.success || !Array.isArray(json.data)) {
       console.warn('[admin-video] Invalid response from /api/memorization-videos');
       adminVideosData = [];
     } else {
       adminVideosData = json.data;
       console.log('[admin-video] Loaded', adminVideosData.length, 'videos');
+
+      // Normalize properties for filtering
+      adminVideosData = adminVideosData.map(v => ({
+        ...v,
+        session: v.session ?? v.session_year ?? v.sessionYear ?? "",
+        term: String(v.term ?? ""),
+        week: String(v.week ?? ""),
+        section_id: String(v.section_id ?? v.sectionId ?? v.section ?? ""),
+        class_id: String(v.class_id ?? v.classId ?? v.class ?? ""),
+        class_name: v.class_name ?? v.className ?? v.class ?? "N/A"
+      }));
+
+      // Populate filter dropdowns
+      populateFilterDropdowns();
     }
-    
-    // Reset filters when loading fresh data
+
+    // Reset filters
     adminFilteredVideos = [...adminVideosData];
     adminDisplayCount = 0;
     renderAdminVideos();
+
   } catch (err) {
     console.error('[admin-video] load videos error', err);
     adminVideosData = [];
@@ -360,6 +376,27 @@ async function loadAdminVideos() {
     renderAdminVideos();
   }
 }
+
+// Populate filter dropdowns dynamically
+function populateFilterDropdowns() {
+  // Sessions
+  const sessionDropdown = document.getElementById("filterSession");
+  const sessions = [...new Set(adminVideosData.map(v => v.session))].sort();
+  sessionDropdown.innerHTML = '<option value="">All Sessions</option>' +
+    sessions.map(s => `<option value="${s}">${s}</option>`).join('');
+
+  // Classes
+  const classDropdown = document.getElementById("filterClass");
+  const classes = [...new Set(adminVideosData.map(v => `${v.section_id}:${v.class_id}`))];
+  classDropdown.innerHTML = '<option value="">All Classes</option>' +
+    classes.map(c => {
+      const [section, cls] = c.split(":");
+      return `<option value="${c}">Section ${section} - Class ${cls}</option>`;
+    }).join('');
+}
+document.getElementById("applyFilterBtn").addEventListener("click", () => {
+  applyAdminFilters();
+});
 
 // ✅ FIXED: Robust filter function that handles all edge cases
 function applyAdminFilters() {
