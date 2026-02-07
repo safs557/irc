@@ -15,6 +15,8 @@ const ADMIN_VIDEOS_PAGE_SIZE = 4;
 
 let allStudentsGeneralData = [];
 
+let adminFiltersApplied = false;
+
 // School Info Module (UPDATED - more reliable)
 const schoolInfo = (() => {
   let info = {
@@ -39,6 +41,9 @@ const schoolInfo = (() => {
 })();
 
 let currentIDCardData = null;
+
+let bootstrap = window.bootstrap;
+let jspdf = window.jspdf;
 
 /* ===========================================================
    UTILITY FUNCTIONS
@@ -93,7 +98,7 @@ async function loadAdminVideoClasses() {
     const list = json.data;
 
     const sel = _scoped('#adminVideoClassSelect');
-    const filterSel = _scoped('#filterClass');
+    const filterSel = _scoped('#videoFilterClass');
 
     if (!sel) return;
     sel.innerHTML = '<option value="">Select Class</option>';
@@ -137,7 +142,7 @@ async function loadAdminVideoSessions() {
     const list = json.data;
 
     const sel = _scoped('#adminVideoSessionSelect');
-    const filterSel = _scoped('#filterSession');
+    const filterSel = _scoped('#videoFilterSession');
 
     if (!sel) return;
     sel.innerHTML = '<option value="">Select Session</option>';
@@ -380,32 +385,40 @@ async function loadAdminVideos() {
 // Populate filter dropdowns dynamically
 function populateFilterDropdowns() {
   // Sessions
-  const sessionDropdown = document.getElementById("filterSession");
+  const sessionDropdown = document.getElementById("videoFilterSession");
   const sessions = [...new Set(adminVideosData.map(v => v.session))].sort();
-  sessionDropdown.innerHTML = '<option value="">All Sessions</option>' +
-    sessions.map(s => `<option value="${s}">${s}</option>`).join('');
+  if (sessionDropdown) {
+    sessionDropdown.innerHTML = '<option value="">All Sessions</option>' +
+      sessions.map(s => `<option value="${s}">${s}</option>`).join('');
+  }
 
   // Classes
-  const classDropdown = document.getElementById("filterClass");
+  const classDropdown = document.getElementById("videoFilterClass");
   const classes = [...new Set(adminVideosData.map(v => `${v.section_id}:${v.class_id}`))];
-  classDropdown.innerHTML = '<option value="">All Classes</option>' +
-    classes.map(c => {
+  if (classDropdown) {
+    classDropdown.innerHTML = '<option value="">All Classes</option>' +
+      classes.map(c => {
       const [section, cls] = c.split(":");
       return `<option value="${c}">Section ${section} - Class ${cls}</option>`;
     }).join('');
+  }
 }
-document.getElementById("applyFilterBtn").addEventListener("click", () => {
-  applyAdminFilters();
-});
+
+const _videoApplyFilterBtn = document.getElementById("videoApplyFilterBtn");
+if (_videoApplyFilterBtn) {
+  _videoApplyFilterBtn.addEventListener("click", () => {
+    applyAdminFilters();
+  });
+}
 
 // ✅ FIXED: Robust filter function that handles all edge cases
 function applyAdminFilters() {
   adminFiltersApplied = true;
 
-  const sessionF = document.getElementById("filterSession")?.value || "";
-  const termF = document.getElementById("filterTerm")?.value || "";
-  const weekF = document.getElementById("filterWeek")?.value || "";
-  const classF = document.getElementById("filterClass")?.value || "";
+  const sessionF = document.getElementById("videoFilterSession")?.value || "";
+  const termF = document.getElementById("videoFilterTerm")?.value || "";
+  const weekF = document.getElementById("videoFilterWeek")?.value || "";
+  const classF = document.getElementById("videoFilterClass")?.value || "";
 
   // DEBUG: See what you are actually filtering for
   console.log('Filtering for:', { sessionF, termF, weekF, classF });
@@ -432,6 +445,7 @@ function applyAdminFilters() {
   adminDisplayCount = 0;
   renderAdminVideos();
 }
+
 function renderAdminVideos() {
   const grid = document.getElementById('adminVideoGrid');
   const loadMoreBtn = document.getElementById('adminLoadMoreBtn');
@@ -735,10 +749,10 @@ async function deleteAdminVideo(videoId) {
    UI WIRING - FILTER & LOAD MORE
    =========================================================== */
 function wireAdminVideoUI() {
-  const applyFilterBtn = document.getElementById('applyFilterBtn');
-  if (applyFilterBtn) {
-    applyFilterBtn.removeEventListener('click', applyAdminFilters);
-    applyFilterBtn.addEventListener('click', applyAdminFilters);
+  const videoApplyBtn = document.getElementById('videoApplyFilterBtn');
+  if (videoApplyBtn) {
+    videoApplyBtn.removeEventListener('click', applyAdminFilters);
+    videoApplyBtn.addEventListener('click', applyAdminFilters);
   }
 
   const loadMoreBtn = document.getElementById('adminLoadMoreBtn');
@@ -1247,11 +1261,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Load student general list
   loadStudentGeneralList().catch(() => {});
 
-  // Wire up filter button
-  const applyFilterBtn = document.getElementById('applyFilterBtn');
-  if (applyFilterBtn) {
-    applyFilterBtn.removeEventListener('click', applyAdminFilters);
-    applyFilterBtn.addEventListener('click', applyAdminFilters);
+  // Wire up video filter button
+  const videoApplyFilterBtn = document.getElementById('videoApplyFilterBtn');
+  if (videoApplyFilterBtn) {
+    videoApplyFilterBtn.removeEventListener('click', applyAdminFilters);
+    videoApplyFilterBtn.addEventListener('click', applyAdminFilters);
   }
 
   // Wire up Load More button

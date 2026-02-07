@@ -707,6 +707,18 @@ async function loadSubjectStudents() {
           <td><input type="text" class="form-control comment" data-enrollment="${stu.enrollment_id}" value="${stu.comments || ''}"></td>
         `
         tbody.appendChild(row)
+
+        // Clamp CA1 and CA2 to max 15, Exam to max 70
+        row.querySelectorAll("input[type=number]").forEach(inp => {
+          inp.addEventListener("input", function() {
+            const max = parseInt(this.max)
+            const min = parseInt(this.min)
+            let val = parseInt(this.value)
+            if (this.value === '') return
+            if (val > max) { this.value = max }
+            if (val < min) { this.value = min }
+          })
+        })
       })
       document.getElementById("subjectStudentsSection").style.display = "block"
     } else {
@@ -730,6 +742,16 @@ async function saveSubjectScores() {
     const ca2 = row.querySelector(".ca2").value || null;
     const exam = row.querySelector(".exam").value || null;
     const comment = row.querySelector(".comment").value;
+    // Validate score limits
+    if (ca1 !== null && (Number(ca1) < 0 || Number(ca1) > 15)) {
+      return alert("CA1 score must be between 0 and 15 for " + row.querySelector("td").textContent);
+    }
+    if (ca2 !== null && (Number(ca2) < 0 || Number(ca2) > 15)) {
+      return alert("CA2 score must be between 0 and 15 for " + row.querySelector("td").textContent);
+    }
+    if (exam !== null && (Number(exam) < 0 || Number(exam) > 70)) {
+      return alert("Exam score must be between 0 and 70 for " + row.querySelector("td").textContent);
+    }
     if (ca1 !== null || ca2 !== null || exam !== null) {
       payload.push({
         enrollment_id: enr,
@@ -737,11 +759,17 @@ async function saveSubjectScores() {
         ca2_score: ca2,
         exam_score: exam,
         comments: comment,
-        date: today // ✅ now each record has a date
+        date: today
       });
     }
   });
   if (!payload.length) return alert("Enter at least one score");
+
+  // Deduplicate by enrollment_id (keep last entry per student)
+  const seen = {};
+  payload.forEach(p => { seen[p.enrollment_id] = p; });
+  const dedupedPayload = Object.values(seen);
+
   try {
     const resp = await fetch(`/api/staff-assessments/${currentStaffId}`, {
       method: "POST",
@@ -751,8 +779,8 @@ async function saveSubjectScores() {
         class_id: classId,
         subject_id: subjectId,
         term,
-        session, // ✅ this will now be used in backend
-        assessments: payload
+        session,
+        assessments: dedupedPayload
       })
     });
     const res = await resp.json();
