@@ -682,9 +682,9 @@ app.get('/api/staff-assessments/:staffId', (req, res) => {
         return res.status(401).json({ success: false, message: 'Unauthorized.' });
     }
     const { staffId } = req.params;
-    const { section_id, class_id, subject_id } = req.query;
+    const { section_id, class_id, subject_id, term, session } = req.query;
     const query = `
-        SELECT 
+        SELECT DISTINCT
             s.full_name AS student_name,
             se.enrollment_id,
             ssa.ca1_score,
@@ -698,12 +698,13 @@ app.get('/api/staff-assessments/:staffId', (req, res) => {
              (sc.section_id = 2 AND sc.western_class_id = se.class_ref))
         JOIN Students s ON se.student_id = s.id
         LEFT JOIN Student_Subject_Assessments ssa ON se.enrollment_id = ssa.enrollment_id 
-            AND ssa.subject_id = ? AND ssa.term = 1
+            AND ssa.subject_id = ? AND ssa.term = ? AND ssa.session_year = ?
         WHERE st.id = ? AND sc.section_id = ? AND 
               ((sc.section_id = 1 AND sc.class_id = ?) OR 
                (sc.section_id = 2 AND sc.western_class_id = ?))
+        ORDER BY s.full_name
     `;
-    db.query(query, [subject_id, staffId, section_id, class_id, class_id], (err, results) => {
+    db.query(query, [subject_id, term || 1, session || '', staffId, section_id, class_id, class_id], (err, results) => {
         if (err) {
             console.error('Error fetching assessments:', err);
             return res.status(500).json({ success: false, message: 'Database error.' });
@@ -717,7 +718,15 @@ app.post('/api/staff-assessments/:staffId', (req, res) => {
   }
 
   const { staffId } = req.params;
-  const { section_id, class_id, subject_id, term, session, assessments } = req.body; // ✅ include session
+  const { section_id, class_id, subject_id, term, session, assessments } = req.body;
+
+  // Deduplicate assessments by enrollment_id — keep only the LAST entry per student
+  const deduped = Object.values(
+    assessments.reduce((map, record) => {
+      map[record.enrollment_id] = record;
+      return map;
+    }, {})
+  );
 
   db.beginTransaction((err) => {
     if (err) {
@@ -754,16 +763,16 @@ app.post('/api/staff-assessments/:staffId', (req, res) => {
       `;
 
       const today = new Date().toISOString().split('T')[0];
-      const values = assessments.map(record => [
+      const values = deduped.map(record => [
         record.enrollment_id,
         subject_id,
         term,
-        session,           // ✅ include session_year
+        session,
         record.ca1_score,
         record.ca2_score,
         record.exam_score,
         record.comments,
-        record.date || today // ✅ use provided date or fallback to today
+        record.date || today
       ]);
 
       db.query(insertQuery, [values], (err) => {
