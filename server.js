@@ -711,7 +711,6 @@ app.get('/api/staff-assessments/:staffId', (req, res) => {
         res.status(200).json({ success: true, data: results });
     });
 });
-
 app.post('/api/staff-assessments/:staffId', (req, res) => {
   if (!req.session.isAuthenticated || req.session.userType !== 'staff') {
     return res.status(401).json({ success: false, message: 'Unauthorized.' });
@@ -2984,19 +2983,25 @@ app.get("/api/staff/:staffId", (req, res) => {
 // =============================
 // MEMORIZATION ENDPOINTS
 // =============================
-
-// Helper: allow staff OR admin (Admin or SuperAdmin)
+// ================================
+// Helper: allow staff OR admin
+// ================================
 function isStaffOrAdmin(req) {
-  return req.session && req.session.isAuthenticated &&
+  return (
+    req.session &&
+    req.session.isAuthenticated &&
     (
-      req.session.userType === 'staff' ||
-      req.session.userType === 'admin' ||
-      req.session.role === 'Admin' ||
-      req.session.role === 'SuperAdmin'
-    );
+      req.session.userType === "staff" ||
+      req.session.userType === "admin" ||
+      req.session.role === "Admin" ||
+      req.session.role === "SuperAdmin"
+    )
+  );
 }
 
-// 2. GET: Available weeks (dropdown)
+// ================================
+// 1. GET: Available weeks
+// ================================
 app.get("/api/staff-memorization-weeks", (req, res) => {
   if (!isStaffOrAdmin(req)) {
     return res.status(401).json({ success: false, message: "Unauthorized." });
@@ -3015,15 +3020,22 @@ app.get("/api/staff-memorization-weeks", (req, res) => {
   `;
 
   db.query(sql, [class_id, term, session], (err, rows) => {
-    if (err) return res.status(500).json({ success: false, message: "DB error." });
-    res.json({ success: true, data: rows.map(r => ({ week: r.week })) });
+    if (err) {
+      console.error("Weeks fetch error:", err);
+      return res.status(500).json({ success: false, message: "DB error." });
+    }
+
+    res.json({
+      success: true,
+      data: rows.map(r => ({ week: r.week }))
+    });
   });
 });
 
-// 1. GET: Ayat range for a specific week + day
-// Replace the current /api/staff-memorization-schemes handler with this (allows staff OR admin and returns empty array when none)
+// ================================
+// 2. GET: Ayat range (FIXED)
+// ================================
 app.get("/api/staff-memorization-schemes", (req, res) => {
-  // allow staff OR admin users (helper isStaffOrAdmin exists in file)
   if (!isStaffOrAdmin(req)) {
     return res.status(401).json({ success: false, message: "Unauthorized." });
   }
@@ -3033,100 +3045,136 @@ app.get("/api/staff-memorization-schemes", (req, res) => {
     return res.status(400).json({ success: false, message: "Missing parameters." });
   }
 
+  // ❗ DO NOT ALIAS — keep DB column names
   const sql = `
-    SELECT id, week, day, from_surah_ayah AS from_ayah, to_surah_ayah AS to_ayah
+    SELECT
+      id,
+      week,
+      day,
+      from_surah_ayah,
+      to_surah_ayah
     FROM Daily_Memorization_Scheme
-    WHERE class_id = ? AND term = ? AND week = ? AND day = ? AND session_year = ?
+    WHERE class_id = ?
+      AND term = ?
+      AND week = ?
+      AND day = ?
+      AND session_year = ?
     LIMIT 1
   `;
 
   db.query(sql, [class_id, term, week, day, session], (err, rows) => {
     if (err) {
-      console.error("DB error fetching memorization scheme:", err);
+      console.error("Scheme fetch error:", err);
       return res.status(500).json({ success: false, message: "Database error." });
     }
-    // Return success with empty array when no scheme exists (do not 404)
-    if (!rows || rows.length === 0) {
+
+    if (!rows.length) {
       return res.status(200).json({ success: true, data: [] });
     }
-    res.status(200).json({ success: true, data: rows });
+
+    const scheme = rows[0];
+
+    res.status(200).json({
+      success: true,
+      data: [{
+        ...scheme,
+        from_surah_ayah: scheme.from_surah_ayah || "N/A",
+        to_surah_ayah: scheme.to_surah_ayah || "N/A"
+      }]
+    });
   });
 });
-// 3. GET: Load students + existing grades for a scheme
-app.get("/api/staff-memorization/:staffId", (req, res) => {
-  if (!req.session.isAuthenticated || req.session.userType !== "staff")
-    return res.status(401).json({ success: false, message: "Unauthorized." });
 
-  const { staffId } = req.params;
+// ================================
+// 3. GET: Students + grades
+// ================================
+app.get("/api/staff-memorization/:staffId", (req, res) => {
+  if (!req.session.isAuthenticated || req.session.userType !== "staff") {
+    return res.status(401).json({ success: false, message: "Unauthorized." });
+  }
+
   const { section_id, class_id, scheme_id, session, term } = req.query;
 
-  if (!section_id || !class_id || !scheme_id || !session || !term)
+  if (!section_id || !class_id || !scheme_id || !session || !term) {
     return res.status(400).json({ success: false, message: "Missing required query params." });
+  }
 
   const sql = `
     SELECT
-      s.id               AS student_id,
-      s.full_name        AS student_name,
+      s.id AS student_id,
+      s.full_name AS student_name,
       e.enrollment_id,
       a.daily_grade,
-      sme.exam_grade     AS grade,
+      sme.exam_grade AS grade,
       a.comments
     FROM Student_Enrollments e
     JOIN Students s ON s.id = e.student_id
     LEFT JOIN Student_Memorization_Assessments a
       ON a.enrollment_id = e.enrollment_id
-     AND a.scheme_id     = ?
-     AND a.session_year  = ?
-     AND a.term          = ?
+     AND a.scheme_id = ?
+     AND a.session_year = ?
+     AND a.term = ?
     LEFT JOIN Student_Memorization_Exam sme
       ON sme.enrollment_id = e.enrollment_id
-     AND sme.term          = ?
-     AND sme.session_year  = ?
-    WHERE e.section_id = ? AND e.class_ref = ?
-    ORDER BY s.full_name`;
+     AND sme.term = ?
+     AND sme.session_year = ?
+    WHERE e.section_id = ?
+      AND e.class_ref = ?
+    ORDER BY s.full_name
+  `;
 
-  db.query(sql, [scheme_id, session, term, term, session, section_id, class_id], (err, rows) => {
-    if (err) {
-      console.error("Student fetch error:", err);
-      return res.status(500).json({ success: false, message: "DB error." });
+  db.query(
+    sql,
+    [scheme_id, session, term, term, session, section_id, class_id],
+    (err, rows) => {
+      if (err) {
+        console.error("Student fetch error:", err);
+        return res.status(500).json({ success: false, message: "DB error." });
+      }
+
+      if (!rows.length) {
+        return res.status(404).json({ success: false, message: "No students." });
+      }
+
+      res.json({ success: true, data: rows });
     }
-    if (!rows.length) return res.status(404).json({ success: false, message: "No students." });
-    res.json({ success: true, data: rows });
-  });
+  );
 });
 
-// 4. POST: Save grades – **unique per (scheme_id, week, day)**
+// ================================
+// 4. POST: Save memorization
+// ================================
 app.post("/api/staff-memorization/:staffId", (req, res) => {
-  if (!req.session.isAuthenticated || req.session.userType !== "staff")
+  if (!req.session.isAuthenticated || req.session.userType !== "staff") {
     return res.status(401).json({ success: false, message: "Unauthorized." });
+  }
 
-  const { staffId } = req.params;
   const { term, week, day, session, scheme_id, memorization } = req.body;
 
   if (
     !term || !week || !day ||
-    !session || !scheme_id || !Array.isArray(memorization) || !memorization.length
-  )
+    !session || !scheme_id ||
+    !Array.isArray(memorization) || !memorization.length
+  ) {
     return res.status(400).json({ success: false, message: "Invalid payload." });
+  }
 
-  db.beginTransaction(async (trErr) => {
-    if (trErr) return res.status(500).json({ success: false });
+  db.beginTransaction(async err => {
+    if (err) return res.status(500).json({ success: false });
 
     const today = new Date().toISOString().slice(0, 10);
 
     try {
-      // ---------- 1️⃣ Separate daily / exam ----------
       const dailyGrades = [];
-      const examGradesMap = new Map();               // deduplicate per student+term+session (ignore scheme_id)
+      const examGradesMap = new Map();
 
       memorization.forEach(r => {
-        // ----- daily -----
         if (r.daily_grade) {
           dailyGrades.push([
             r.enrollment_id,
             scheme_id,
             r.daily_grade,
-            null,                     // exam_grade
+            null,
             r.comments || "",
             today,
             session,
@@ -3138,68 +3186,60 @@ app.post("/api/staff-memorization/:staffId", (req, res) => {
           ]);
         }
 
-        // ----- exam (once per term+session) -----
         if (r.grade != null) {
-          const key = `${r.enrollment_id}_${term}_${session}`;
-          examGradesMap.set(key, [
-            r.enrollment_id,
-            term,
-            session,
-            r.grade
-          ]);
+          examGradesMap.set(
+            `${r.enrollment_id}_${term}_${session}`,
+            [r.enrollment_id, term, session, r.grade]
+          );
         }
       });
 
-      const examGrades = Array.from(examGradesMap.values());
-
-      // ---------- 2️⃣ Daily grades (unchanged) ----------
       if (dailyGrades.length) {
-        const insertDailySql = `
-          INSERT INTO Student_Memorization_Assessments
-            (enrollment_id, scheme_id, daily_grade, exam_grade, comments,
-             date, session_year, term, week,
-             from_surah_ayah, to_surah_ayah, assessed_day)
-          VALUES ?
-          ON DUPLICATE KEY UPDATE
-            daily_grade = VALUES(daily_grade),
-            comments    = VALUES(comments),
-            from_surah_ayah = VALUES(from_surah_ayah),
-            to_surah_ayah   = VALUES(to_surah_ayah),
-            date            = VALUES(date)
-        `;
         await new Promise((resolve, reject) =>
-          db.query(insertDailySql, [dailyGrades], err => err ? reject(err) : resolve())
+          db.query(
+            `
+            INSERT INTO Student_Memorization_Assessments
+              (enrollment_id, scheme_id, daily_grade, exam_grade, comments,
+               date, session_year, term, week,
+               from_surah_ayah, to_surah_ayah, assessed_day)
+            VALUES ?
+            ON DUPLICATE KEY UPDATE
+              daily_grade = VALUES(daily_grade),
+              comments = VALUES(comments),
+              from_surah_ayah = VALUES(from_surah_ayah),
+              to_surah_ayah = VALUES(to_surah_ayah),
+              date = VALUES(date)
+            `,
+            [dailyGrades],
+            err => (err ? reject(err) : resolve())
+          )
         );
       }
 
-      // ---------- 3️⃣ Exam grades (updated: no scheme_id) ----------
+      const examGrades = Array.from(examGradesMap.values());
       if (examGrades.length) {
-        const examValues = examGrades.map(
-          ([enrollment_id, term, session_year, exam_grade]) => [
-            enrollment_id, term, session_year, exam_grade
-          ]
-        );
-
-        const insertExamSql = `
-          INSERT INTO Student_Memorization_Exam
-            (enrollment_id, term, session_year, exam_grade)
-          VALUES ?
-          ON DUPLICATE KEY UPDATE
-            exam_grade = VALUES(exam_grade)
-        `;
-
         await new Promise((resolve, reject) =>
-          db.query(insertExamSql, [examValues], err => err ? reject(err) : resolve())
+          db.query(
+            `
+            INSERT INTO Student_Memorization_Exam
+              (enrollment_id, term, session_year, exam_grade)
+            VALUES ?
+            ON DUPLICATE KEY UPDATE
+              exam_grade = VALUES(exam_grade)
+            `,
+            [examGrades],
+            err => (err ? reject(err) : resolve())
+          )
         );
       }
 
-      // ---------- 4️⃣ Commit ----------
-      db.commit(commitErr => {
-        if (commitErr) return db.rollback(() => res.status(500).json({ success: false }));
+      db.commit(err => {
+        if (err) return db.rollback(() => res.status(500).json({ success: false }));
         res.json({ success: true, message: "Saved successfully." });
       });
-    } catch (err) {
-      console.error("Error saving memorization:", err);
+
+    } catch (e) {
+      console.error("Save error:", e);
       db.rollback(() => res.status(500).json({ success: false }));
     }
   });
